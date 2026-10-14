@@ -483,39 +483,23 @@ export default function HomeDashboard() {
               const overallJudgment =
                 audit.overall_judgment ||
                 (typeof audit.feedback === "string" ? audit.feedback : "") ||
-                `The representative conducted the interaction with professional courtesy and addressed the customer inquiry directly.`;
+                `Qualitative performance evaluation dynamically synthesized from the conversation recording for ${repName}.`;
 
-              const positivePoints: string[] =
-                Array.isArray(audit.positive_points) && audit.positive_points.length > 0
-                  ? audit.positive_points
-                  : [
-                      "Polite and professional phone conduct throughout the dialogue.",
-                      "Prompt responsiveness to customer queries and clear articulation.",
-                    ];
+              const positivePoints: string[] = Array.isArray(audit.positive_points)
+                ? audit.positive_points
+                : [];
 
-              const neutralPoints: string[] =
-                Array.isArray(audit.neutral_points) && audit.neutral_points.length > 0
-                  ? audit.neutral_points
-                  : [
-                      "Brief, transactional interaction focused strictly on current scheduling and status.",
-                      "Customer language and conversation pace were acknowledged appropriately.",
-                    ];
+              const neutralPoints: string[] = Array.isArray(audit.neutral_points)
+                ? audit.neutral_points
+                : [];
 
-              const negativePoints: string[] =
-                Array.isArray(audit.negative_points) && audit.negative_points.length > 0
-                  ? audit.negative_points
-                  : [
-                      "Did not proactively uncover underlying buyer motivation or timeline requirements.",
-                      "Did not secure an immediate calendar invitation or confirmed visit slot.",
-                    ];
+              const negativePoints: string[] = Array.isArray(audit.negative_points)
+                ? audit.negative_points
+                : [];
 
-              const scopeOfImprovement: string[] =
-                Array.isArray(audit.scope_of_improvement) && audit.scope_of_improvement.length > 0
-                  ? audit.scope_of_improvement
-                  : [
-                      "Implement a structured qualification framework before volunteering commercial details.",
-                      "Always propose a specific follow-up time slot rather than open-ended follow-up.",
-                    ];
+              const scopeOfImprovement: string[] = Array.isArray(audit.scope_of_improvement)
+                ? audit.scope_of_improvement
+                : [];
 
               const behavioralFlags: Array<{
                 flag_type: string;
@@ -526,16 +510,7 @@ export default function HomeDashboard() {
                 time_span?: string;
                 verbatim_quote?: string;
                 claim_linked?: string;
-              }> =
-                Array.isArray(audit.behavioral_flags) && audit.behavioral_flags.length > 0
-                  ? audit.behavioral_flags
-                  : [
-                      {
-                        flag_type: "None",
-                        severity: "Clean",
-                        description: "No arrogance, misleading statements, or ignorance detected during the call.",
-                      },
-                    ];
+              }> = Array.isArray(audit.behavioral_flags) ? audit.behavioral_flags : [];
 
               // Check if any flag has an active issue (not "None" or "Clean")
               const activeFlags = behavioralFlags.filter(
@@ -577,11 +552,7 @@ export default function HomeDashboard() {
                         const targetSeconds =
                           flag.timestamp_reference ??
                           flag.timestamp_ref ??
-                          (callDetails.evidence?.find((e) =>
-                            e.category === "pricing" ||
-                            e.claim.toLowerCase().includes("negotiable") ||
-                            e.verbatim_quote.toLowerCase().includes("negotiable")
-                          )?.start_time ?? 133.99);
+                          (callDetails.evidence?.[0]?.start_time ?? 0);
 
                         const timeBadge = flag.time_span
                           ? flag.time_span
@@ -589,11 +560,8 @@ export default function HomeDashboard() {
 
                         const proofQuote =
                           flag.verbatim_quote ||
-                          callDetails.evidence?.find((e) =>
-                            e.category === "pricing" ||
-                            e.claim.toLowerCase().includes("negotiable")
-                          )?.verbatim_quote ||
-                          "दोन हजार per square feet negotiable आहे sir";
+                          flag.claim_linked ||
+                          flag.description;
 
                         return (
                           <div
@@ -627,17 +595,19 @@ export default function HomeDashboard() {
                                   </p>
 
                                   {/* Recorded Audio Proof & Verbatim Quote */}
-                                  <div className="p-2.5 rounded-lg bg-amber-100/70 border border-amber-200/90 text-xs text-amber-950 flex items-start gap-2 shadow-2xs">
-                                    <Quote className="w-3.5 h-3.5 text-amber-700 mt-0.5 shrink-0 opacity-80" />
-                                    <div className="space-y-0.5">
-                                      <span className="font-bold text-[11px] text-amber-900 block">
-                                        Recorded Audio Evidence & Verbatim Quote:
-                                      </span>
-                                      <p className="italic font-sans text-amber-950 font-medium leading-relaxed">
-                                        &ldquo;{proofQuote}&rdquo;
-                                      </p>
+                                  {proofQuote && (
+                                    <div className="p-2.5 rounded-lg bg-amber-100/70 border border-amber-200/90 text-xs text-amber-950 flex items-start gap-2 shadow-2xs">
+                                      <Quote className="w-3.5 h-3.5 text-amber-700 mt-0.5 shrink-0 opacity-80" />
+                                      <div className="space-y-0.5">
+                                        <span className="font-bold text-[11px] text-amber-900 block">
+                                          Recorded Audio Evidence & Verbatim Quote:
+                                        </span>
+                                        <p className="italic font-sans text-amber-950 font-medium leading-relaxed">
+                                          &ldquo;{proofQuote}&rdquo;
+                                        </p>
+                                      </div>
                                     </div>
-                                  </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -700,12 +670,18 @@ export default function HomeDashboard() {
                         </h4>
                       </div>
                       <ul className="space-y-2.5 flex-1">
-                        {positivePoints.map((pt, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs text-emerald-950 leading-relaxed">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
-                            <span>{pt}</span>
+                        {positivePoints.length > 0 ? (
+                          positivePoints.map((pt, idx) => (
+                            <li key={idx} className="flex items-start gap-2 text-xs text-emerald-950 leading-relaxed">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" />
+                              <span>{pt}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="text-xs text-neutral-500 italic py-1">
+                            No specific positive highlights recorded for this interaction.
                           </li>
-                        ))}
+                        )}
                       </ul>
                     </div>
 
@@ -718,12 +694,18 @@ export default function HomeDashboard() {
                         </h4>
                       </div>
                       <ul className="space-y-2.5 flex-1">
-                        {neutralPoints.map((pt, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs text-neutral-700 leading-relaxed">
-                            <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mt-1.5 shrink-0" />
-                            <span>{pt}</span>
+                        {neutralPoints.length > 0 ? (
+                          neutralPoints.map((pt, idx) => (
+                            <li key={idx} className="flex items-start gap-2 text-xs text-neutral-700 leading-relaxed">
+                              <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 mt-1.5 shrink-0" />
+                              <span>{pt}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="text-xs text-neutral-500 italic py-1">
+                            No neutral observations noted.
                           </li>
-                        ))}
+                        )}
                       </ul>
                     </div>
 
@@ -736,12 +718,19 @@ export default function HomeDashboard() {
                         </h4>
                       </div>
                       <ul className="space-y-2.5 flex-1">
-                        {negativePoints.map((pt, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs text-rose-950 leading-relaxed">
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 mt-0.5 shrink-0" />
-                            <span>{pt}</span>
-                          </li>
-                        ))}
+                        {negativePoints.length > 0 ? (
+                          negativePoints.map((pt, idx) => (
+                            <li key={idx} className="flex items-start gap-2 text-xs text-rose-950 leading-relaxed">
+                              <AlertCircle className="w-3.5 h-3.5 text-rose-600 mt-0.5 shrink-0" />
+                              <span>{pt}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-emerald-800 bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-200">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span>Clean execution — no critical negative points or protocol breaches observed.</span>
+                          </div>
+                        )}
                       </ul>
                     </div>
                   </div>
@@ -760,21 +749,27 @@ export default function HomeDashboard() {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      {scopeOfImprovement.map((item, idx) => (
-                        <div
-                          key={idx}
-                          className="p-3.5 rounded-lg bg-white border border-neutral-200 flex items-start gap-2.5 shadow-2xs"
-                        >
-                          <div className="p-1 rounded bg-amber-50 text-amber-700 mt-0.5 shrink-0">
-                            <ChevronRight className="w-3.5 h-3.5" />
+                    {scopeOfImprovement.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        {scopeOfImprovement.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3.5 rounded-lg bg-white border border-neutral-200 flex items-start gap-2.5 shadow-2xs"
+                          >
+                            <div className="p-1 rounded bg-amber-50 text-amber-700 mt-0.5 shrink-0">
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </div>
+                            <p className="text-xs text-neutral-800 leading-relaxed font-medium">
+                              {item}
+                            </p>
                           </div>
-                          <p className="text-xs text-neutral-800 leading-relaxed font-medium">
-                            {item}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3.5 rounded-lg bg-white border border-neutral-200 text-xs text-neutral-600 italic">
+                        Representative adhered to targeted sales protocol; no corrective coaching actions required.
+                      </div>
+                    )}
                   </div>
                 </div>
               );

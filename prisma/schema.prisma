@@ -18,8 +18,8 @@ model Call {
   status             String           @default("uploaded")
   sarvamJobId        String?          @map("sarvam_job_id")
   errorMessage       String?          @map("error_message")
-  createdAt          DateTime         @default(now()) @map("created_at")
-  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at")
+  createdAt          String           @default("") @map("created_at")
+  updatedAt          String           @default("") @map("updated_at")
 
   transcripts        Transcript[]
   analyses           CallAnalysis[]
@@ -57,7 +57,7 @@ model CallAnalysis {
   languageMix          String?  @map("language_mix")
   entitiesJson         String?  @map("entities_json")
   salesPerformanceJson String?  @map("sales_performance_json")
-  createdAt            DateTime @default(now()) @map("created_at")
+  createdAt            String   @default("") @map("created_at")
 
   call                 Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
 

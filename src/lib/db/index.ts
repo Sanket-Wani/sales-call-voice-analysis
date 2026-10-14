@@ -148,8 +148,8 @@ export async function getAllCalls(): Promise<CallRecord[]> {
     status: c.status as CallRecord["status"],
     sarvam_job_id: c.sarvamJobId || undefined,
     error_message: c.errorMessage || undefined,
-    created_at: c.createdAt.toISOString(),
-    updated_at: c.updatedAt.toISOString(),
+    created_at: typeof c.createdAt === "string" ? c.createdAt : String(c.createdAt),
+    updated_at: typeof c.updatedAt === "string" ? c.updatedAt : String(c.updatedAt),
   }));
 }
 
@@ -170,8 +170,8 @@ export async function getCallById(id: string): Promise<CallRecord | null> {
     status: c.status as CallRecord["status"],
     sarvam_job_id: c.sarvamJobId || undefined,
     error_message: c.errorMessage || undefined,
-    created_at: c.createdAt.toISOString(),
-    updated_at: c.updatedAt.toISOString(),
+    created_at: typeof c.createdAt === "string" ? c.createdAt : String(c.createdAt),
+    updated_at: typeof c.updatedAt === "string" ? c.updatedAt : String(c.updatedAt),
   };
 }
 
@@ -264,7 +264,7 @@ export async function getCallAnalysis(callId: string): Promise<AnalysisRecord | 
     language_mix: row.languageMix || undefined,
     entities_json: row.entitiesJson || undefined,
     sales_performance_json: row.salesPerformanceJson || undefined,
-    created_at: row.createdAt.toISOString(),
+    created_at: typeof row.createdAt === "string" ? row.createdAt : String(row.createdAt),
   };
 }
 
@@ -403,8 +403,8 @@ export async function getFullCallDetails(callId: string) {
       status: call.status as CallRecord["status"],
       sarvam_job_id: call.sarvamJobId || undefined,
       error_message: call.errorMessage || undefined,
-      created_at: call.createdAt.toISOString(),
-      updated_at: call.updatedAt.toISOString(),
+      created_at: typeof call.createdAt === "string" ? call.createdAt : String(call.createdAt),
+      updated_at: typeof call.updatedAt === "string" ? call.updatedAt : String(call.updatedAt),
     },
     transcripts: call.transcripts.map((t) => ({
       id: t.id,
@@ -428,7 +428,7 @@ export async function getFullCallDetails(callId: string) {
           language_mix: call.analyses[0].languageMix || "",
           entities_json: call.analyses[0].entitiesJson || "",
           sales_performance_json: call.analyses[0].salesPerformanceJson || "",
-          created_at: call.analyses[0].createdAt.toISOString(),
+          created_at: typeof call.analyses[0].createdAt === "string" ? call.analyses[0].createdAt : String(call.analyses[0].createdAt),
         }
       : null,
     evidence: call.evidenceClaims.map((e) => ({
