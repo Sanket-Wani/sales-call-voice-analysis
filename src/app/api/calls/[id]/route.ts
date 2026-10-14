@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const details = getFullCallDetails(id);
+    const details = await getFullCallDetails(id);
 
     if (!details) {
       return NextResponse.json({ success: false, error: "Call not found" }, { status: 404 });

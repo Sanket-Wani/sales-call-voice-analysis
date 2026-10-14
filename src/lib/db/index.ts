@@ -1,109 +1,21 @@
-import Database from "better-sqlite3";
-import fs from "fs";
-import path from "path";
+import { PrismaClient } from "@prisma/client";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+
+export const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+  });
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+// Backward-compatible getDb returning prisma client
+export function getDb() {
+  return prisma;
 }
 
-const rawUrl = process.env.DATABASE_URL || "";
-const DB_PATH = rawUrl.startsWith("file:")
-  ? path.resolve(process.cwd(), rawUrl.replace(/^file:/, ""))
-  : path.join(DATA_DIR, "sales_call.db");
-
-// Singleton database instance
-let _db: Database.Database | null = null;
-
-export function getDb(): Database.Database {
-  if (!_db) {
-    _db = new Database(DB_PATH);
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
-    initTables(_db);
-  }
-  return _db;
-}
-
-function initTables(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS calls (
-      id TEXT PRIMARY KEY,
-      file_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      duration_seconds REAL DEFAULT 0,
-      representative_name TEXT,
-      customer_name TEXT,
-      customer_phone TEXT,
-      status TEXT NOT NULL DEFAULT 'uploaded', -- uploaded, transcribing, transcribed, analyzing, completed, failed
-      sarvam_job_id TEXT,
-      error_message TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS transcripts (
-      id TEXT PRIMARY KEY,
-      call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
-      speaker_id TEXT NOT NULL,
-      speaker_role TEXT DEFAULT 'unknown', -- representative, customer, unknown
-      text TEXT NOT NULL,
-      start_time REAL NOT NULL,
-      end_time REAL NOT NULL,
-      sequence_order INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_transcripts_call_id ON transcripts(call_id);
-    CREATE INDEX IF NOT EXISTS idx_transcripts_times ON transcripts(call_id, start_time);
-
-    CREATE TABLE IF NOT EXISTS call_analyses (
-      id TEXT PRIMARY KEY,
-      call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
-      llm_provider TEXT NOT NULL, -- sarvam, gemini
-      llm_model TEXT NOT NULL,    -- sarvam-105b, gemini-2.5-flash
-      executive_summary TEXT,
-      call_outcome TEXT,
-      lead_sentiment TEXT,
-      language_mix TEXT,
-      entities_json TEXT,         -- JSON string
-      sales_performance_json TEXT,-- JSON string
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_analyses_call_id ON call_analyses(call_id);
-
-    CREATE TABLE IF NOT EXISTS evidence_claims (
-      id TEXT PRIMARY KEY,
-      call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
-      claim TEXT NOT NULL,
-      category TEXT NOT NULL,     -- pricing, project_details, customer_budget, objection, commitment, action_item
-      speaker_role TEXT,          -- Representative, Customer, Unknown
-      speaker_id TEXT,
-      verbatim_quote TEXT NOT NULL,
-      start_time REAL NOT NULL,
-      end_time REAL NOT NULL,
-      confidence REAL DEFAULT 1.0,
-      grounding_notes TEXT,
-      status TEXT DEFAULT 'verified' -- verified, flagged, reviewed
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_claims_call_id ON evidence_claims(call_id);
-
-    CREATE TABLE IF NOT EXISTS action_items (
-      id TEXT PRIMARY KEY,
-      call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
-      task TEXT NOT NULL,
-      assignee TEXT,              -- Representative, Customer
-      timestamp_ref REAL,
-      urgency TEXT,
-      completed INTEGER DEFAULT 0
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_actions_call_id ON action_items(call_id);
-  `);
-}
-
-// Data access operations
+// Data access operations & types
 export interface CallRecord {
   id: string;
   file_name: string;
@@ -169,208 +81,378 @@ export interface AnalysisRecord {
   created_at: string;
 }
 
-export function createCallRecord(call: Omit<CallRecord, "created_at" | "updated_at">): void {
-  const db = getDb();
-  const stmt = db.prepare(`
-    INSERT INTO calls (id, file_name, file_path, duration_seconds, representative_name, customer_name, customer_phone, status, sarvam_job_id)
-    VALUES (@id, @file_name, @file_path, @duration_seconds, @representative_name, @customer_name, @customer_phone, @status, @sarvam_job_id)
-  `);
-  stmt.run(call);
+export async function createCallRecord(call: Omit<CallRecord, "created_at" | "updated_at">): Promise<void> {
+  await prisma.call.upsert({
+    where: { id: call.id },
+    create: {
+      id: call.id,
+      fileName: call.file_name,
+      filePath: call.file_path,
+      durationSeconds: call.duration_seconds || 0,
+      representativeName: call.representative_name || null,
+      customerName: call.customer_name || null,
+      customerPhone: call.customer_phone || null,
+      status: call.status,
+      sarvamJobId: call.sarvam_job_id || null,
+      errorMessage: call.error_message || null,
+    },
+    update: {
+      status: call.status,
+      durationSeconds: call.duration_seconds || 0,
+      representativeName: call.representative_name || null,
+      customerName: call.customer_name || null,
+      customerPhone: call.customer_phone || null,
+    },
+  });
 }
 
-export function updateCallStatus(id: string, status: CallRecord["status"], errorMessage?: string): void {
-  const db = getDb();
-  const stmt = db.prepare(`
-    UPDATE calls 
-    SET status = ?, error_message = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `);
-  stmt.run(status, errorMessage || null, id);
+export async function updateCallStatus(id: string, status: CallRecord["status"], errorMessage?: string): Promise<void> {
+  await prisma.call.update({
+    where: { id },
+    data: {
+      status,
+      errorMessage: errorMessage || null,
+    },
+  });
 }
 
-export function updateCallMetadata(id: string, updates: Partial<CallRecord>): void {
-  const db = getDb();
-  const fields = Object.keys(updates)
-    .filter(k => k !== "id")
-    .map(k => `${k} = @${k}`)
-    .join(", ");
-  if (!fields) return;
+export async function updateCallMetadata(id: string, updates: Partial<CallRecord>): Promise<void> {
+  const data: any = {};
+  if (updates.duration_seconds !== undefined) data.durationSeconds = updates.duration_seconds;
+  if (updates.representative_name !== undefined) data.representativeName = updates.representative_name;
+  if (updates.customer_name !== undefined) data.customerName = updates.customer_name;
+  if (updates.customer_phone !== undefined) data.customerPhone = updates.customer_phone;
+  if (updates.status !== undefined) data.status = updates.status;
+  if (updates.sarvam_job_id !== undefined) data.sarvamJobId = updates.sarvam_job_id;
+  if (updates.error_message !== undefined) data.errorMessage = updates.error_message;
 
-  const stmt = db.prepare(`
-    UPDATE calls 
-    SET ${fields}, updated_at = datetime('now')
-    WHERE id = @id
-  `);
-  stmt.run({ ...updates, id });
+  await prisma.call.update({
+    where: { id },
+    data,
+  });
 }
 
-export function getAllCalls(): CallRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM calls ORDER BY created_at DESC").all() as CallRecord[];
-}
-
-export function getCallById(id: string): CallRecord | null {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM calls WHERE id = ?").get(id);
-  return (row as CallRecord) || null;
-}
-
-export function saveTranscripts(callId: string, entries: Array<{ speaker_id: string; speaker_role?: string; text: string; start_time: number; end_time: number }>): void {
-  const db = getDb();
-  const insert = db.prepare(`
-    INSERT INTO transcripts (id, call_id, speaker_id, speaker_role, text, start_time, end_time, sequence_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const deleteExisting = db.prepare("DELETE FROM transcripts WHERE call_id = ?");
-
-  const transaction = db.transaction(() => {
-    deleteExisting.run(callId);
-    entries.forEach((entry, idx) => {
-      const id = `${callId}_t_${idx}`;
-      insert.run(id, callId, entry.speaker_id, entry.speaker_role || "unknown", entry.text, entry.start_time, entry.end_time, idx);
-    });
+export async function getAllCalls(): Promise<CallRecord[]> {
+  const calls = await prisma.call.findMany({
+    orderBy: { createdAt: "desc" },
   });
 
-  transaction();
+  return calls.map((c) => ({
+    id: c.id,
+    file_name: c.fileName,
+    file_path: c.filePath,
+    duration_seconds: c.durationSeconds,
+    representative_name: c.representativeName || undefined,
+    customer_name: c.customerName || undefined,
+    customer_phone: c.customerPhone || undefined,
+    status: c.status as CallRecord["status"],
+    sarvam_job_id: c.sarvamJobId || undefined,
+    error_message: c.errorMessage || undefined,
+    created_at: c.createdAt.toISOString(),
+    updated_at: c.updatedAt.toISOString(),
+  }));
 }
 
-export function getCallTranscripts(callId: string): TranscriptRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM transcripts WHERE call_id = ? ORDER BY sequence_order ASC").all(callId) as TranscriptRecord[];
-}
-
-export function saveAnalysis(callId: string, analysis: {
-  llm_provider: string;
-  llm_model: string;
-  executive_summary: string;
-  call_outcome: string;
-  lead_sentiment: string;
-  language_mix: string;
-  entities_json: string;
-  sales_performance_json: string;
-}): void {
-  const db = getDb();
-  const id = `${callId}_analysis_${Date.now()}`;
-  const deleteExisting = db.prepare("DELETE FROM call_analyses WHERE call_id = ?");
-  const insert = db.prepare(`
-    INSERT INTO call_analyses (id, call_id, llm_provider, llm_model, executive_summary, call_outcome, lead_sentiment, language_mix, entities_json, sales_performance_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const transaction = db.transaction(() => {
-    deleteExisting.run(callId);
-    insert.run(
-      id,
-      callId,
-      analysis.llm_provider,
-      analysis.llm_model,
-      analysis.executive_summary,
-      analysis.call_outcome,
-      analysis.lead_sentiment,
-      analysis.language_mix,
-      analysis.entities_json,
-      analysis.sales_performance_json
-    );
+export async function getCallById(id: string): Promise<CallRecord | null> {
+  const c = await prisma.call.findUnique({
+    where: { id },
   });
-
-  transaction();
-}
-
-export function getCallAnalysis(callId: string): AnalysisRecord | null {
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM call_analyses WHERE call_id = ? ORDER BY created_at DESC LIMIT 1").get(callId);
-  return (row as AnalysisRecord) || null;
-}
-
-export function saveEvidenceClaims(callId: string, claims: Array<{
-  claim: string;
-  category: string;
-  speaker_role?: string;
-  speaker_id?: string;
-  verbatim_quote: string;
-  start_time: number;
-  end_time: number;
-  confidence: number;
-  grounding_notes?: string;
-}>): void {
-  const db = getDb();
-  const deleteExisting = db.prepare("DELETE FROM evidence_claims WHERE call_id = ?");
-  const insert = db.prepare(`
-    INSERT INTO evidence_claims (id, call_id, claim, category, speaker_role, speaker_id, verbatim_quote, start_time, end_time, confidence, grounding_notes, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified')
-  `);
-
-  const transaction = db.transaction(() => {
-    deleteExisting.run(callId);
-    claims.forEach((c, idx) => {
-      const id = `${callId}_claim_${idx}`;
-      insert.run(
-        id,
-        callId,
-        c.claim,
-        c.category,
-        c.speaker_role || "Unknown",
-        c.speaker_id || "",
-        c.verbatim_quote,
-        c.start_time,
-        c.end_time,
-        c.confidence || 1.0,
-        c.grounding_notes || ""
-      );
-    });
-  });
-
-  transaction();
-}
-
-export function getCallEvidence(callId: string): EvidenceRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM evidence_claims WHERE call_id = ? ORDER BY start_time ASC").all(callId) as EvidenceRecord[];
-}
-
-export function saveActionItems(callId: string, items: Array<{
-  task: string;
-  assignee?: string;
-  timestamp_ref?: number;
-  urgency?: string;
-}>): void {
-  const db = getDb();
-  const deleteExisting = db.prepare("DELETE FROM action_items WHERE call_id = ?");
-  const insert = db.prepare(`
-    INSERT INTO action_items (id, call_id, task, assignee, timestamp_ref, urgency, completed)
-    VALUES (?, ?, ?, ?, ?, ?, 0)
-  `);
-
-  const transaction = db.transaction(() => {
-    deleteExisting.run(callId);
-    items.forEach((item, idx) => {
-      const id = `${callId}_act_${idx}`;
-      insert.run(id, callId, item.task, item.assignee || "Representative", item.timestamp_ref || 0, item.urgency || "Normal");
-    });
-  });
-
-  transaction();
-}
-
-export function getCallActionItems(callId: string): ActionItemRecord[] {
-  const db = getDb();
-  return db.prepare("SELECT * FROM action_items WHERE call_id = ?").all(callId) as ActionItemRecord[];
-}
-
-export function getFullCallDetails(callId: string) {
-  const call = getCallById(callId);
-  if (!call) return null;
-  const transcripts = getCallTranscripts(callId);
-  const analysis = getCallAnalysis(callId);
-  const evidence = getCallEvidence(callId);
-  const actionItems = getCallActionItems(callId);
+  if (!c) return null;
 
   return {
-    call,
-    transcripts,
-    analysis,
-    evidence,
-    actionItems,
+    id: c.id,
+    file_name: c.fileName,
+    file_path: c.filePath,
+    duration_seconds: c.durationSeconds,
+    representative_name: c.representativeName || undefined,
+    customer_name: c.customerName || undefined,
+    customer_phone: c.customerPhone || undefined,
+    status: c.status as CallRecord["status"],
+    sarvam_job_id: c.sarvamJobId || undefined,
+    error_message: c.errorMessage || undefined,
+    created_at: c.createdAt.toISOString(),
+    updated_at: c.updatedAt.toISOString(),
+  };
+}
+
+export async function saveTranscripts(
+  callId: string,
+  entries: Array<{ speaker_id: string; speaker_role?: string; text: string; start_time: number; end_time: number }>
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.transcript.deleteMany({ where: { callId } }),
+    prisma.transcript.createMany({
+      data: entries.map((entry, idx) => ({
+        id: `${callId}_t_${idx}`,
+        callId,
+        speakerId: String(entry.speaker_id),
+        speakerRole: entry.speaker_role || "unknown",
+        text: entry.text,
+        startTime: entry.start_time,
+        endTime: entry.end_time,
+        sequenceOrder: idx,
+      })),
+    }),
+  ]);
+}
+
+export async function getCallTranscripts(callId: string): Promise<TranscriptRecord[]> {
+  const list = await prisma.transcript.findMany({
+    where: { callId },
+    orderBy: { sequenceOrder: "asc" },
+  });
+
+  return list.map((t) => ({
+    id: t.id,
+    call_id: t.callId,
+    speaker_id: t.speakerId,
+    speaker_role: t.speakerRole,
+    text: t.text,
+    start_time: t.startTime,
+    end_time: t.endTime,
+    sequence_order: t.sequenceOrder,
+  }));
+}
+
+export async function saveAnalysis(
+  callId: string,
+  analysis: {
+    llm_provider: string;
+    llm_model: string;
+    executive_summary: string;
+    call_outcome: string;
+    lead_sentiment: string;
+    language_mix: string;
+    entities_json: string;
+    sales_performance_json: string;
+  }
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.callAnalysis.deleteMany({ where: { callId } }),
+    prisma.callAnalysis.create({
+      data: {
+        id: `${callId}_analysis_${Date.now()}`,
+        callId,
+        llmProvider: analysis.llm_provider,
+        llmModel: analysis.llm_model,
+        executiveSummary: analysis.executive_summary,
+        callOutcome: analysis.call_outcome,
+        leadSentiment: analysis.lead_sentiment,
+        languageMix: analysis.language_mix,
+        entitiesJson: analysis.entities_json,
+        salesPerformanceJson: analysis.sales_performance_json,
+      },
+    }),
+  ]);
+}
+
+export async function getCallAnalysis(callId: string): Promise<AnalysisRecord | null> {
+  const row = await prisma.callAnalysis.findFirst({
+    where: { callId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    call_id: row.callId,
+    llm_provider: row.llmProvider,
+    llm_model: row.llmModel,
+    executive_summary: row.executiveSummary || undefined,
+    call_outcome: row.callOutcome || undefined,
+    lead_sentiment: row.leadSentiment || undefined,
+    language_mix: row.languageMix || undefined,
+    entities_json: row.entitiesJson || undefined,
+    sales_performance_json: row.salesPerformanceJson || undefined,
+    created_at: row.createdAt.toISOString(),
+  };
+}
+
+export async function saveEvidenceClaims(
+  callId: string,
+  claims: Array<{
+    claim: string;
+    category: string;
+    speaker_role?: string;
+    speaker_id?: string;
+    verbatim_quote: string;
+    start_time: number;
+    end_time: number;
+    confidence: number;
+    grounding_notes?: string;
+  }>
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.evidenceClaim.deleteMany({ where: { callId } }),
+    prisma.evidenceClaim.createMany({
+      data: claims.map((c, idx) => ({
+        id: `${callId}_claim_${idx}`,
+        callId,
+        claim: c.claim,
+        category: c.category,
+        speakerRole: c.speaker_role || "Unknown",
+        speakerId: c.speaker_id || "",
+        verbatimQuote: c.verbatim_quote,
+        startTime: c.start_time,
+        endTime: c.end_time,
+        confidence: c.confidence || 1.0,
+        groundingNotes: c.grounding_notes || "",
+        status: "verified",
+      })),
+    }),
+  ]);
+}
+
+export async function getCallEvidence(callId: string): Promise<EvidenceRecord[]> {
+  const list = await prisma.evidenceClaim.findMany({
+    where: { callId },
+    orderBy: { startTime: "asc" },
+  });
+
+  return list.map((c) => ({
+    id: c.id,
+    call_id: c.callId,
+    claim: c.claim,
+    category: c.category,
+    speaker_role: c.speakerRole || undefined,
+    speaker_id: c.speakerId || undefined,
+    verbatim_quote: c.verbatimQuote,
+    start_time: c.startTime,
+    end_time: c.endTime,
+    confidence: c.confidence,
+    grounding_notes: c.groundingNotes || undefined,
+    status: c.status || "verified",
+  }));
+}
+
+export async function saveActionItems(
+  callId: string,
+  items: Array<{
+    task: string;
+    assignee?: string;
+    timestamp_ref?: number;
+    urgency?: string;
+  }>
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.actionItem.deleteMany({ where: { callId } }),
+    prisma.actionItem.createMany({
+      data: items.map((item, idx) => ({
+        id: `${callId}_act_${idx}`,
+        callId,
+        task: item.task,
+        assignee: item.assignee || "Representative",
+        timestampRef: item.timestamp_ref || 0,
+        urgency: item.urgency || "Normal",
+        completed: 0,
+      })),
+    }),
+  ]);
+}
+
+export async function getCallActionItems(callId: string): Promise<ActionItemRecord[]> {
+  const list = await prisma.actionItem.findMany({
+    where: { callId },
+    orderBy: { id: "asc" },
+  });
+
+  return list.map((a) => ({
+    id: a.id,
+    call_id: a.callId,
+    task: a.task,
+    assignee: a.assignee || undefined,
+    timestamp_ref: a.timestampRef || undefined,
+    urgency: a.urgency || undefined,
+    completed: a.completed,
+  }));
+}
+
+export async function updateTranscriptSpeakerRoles(callId: string, repSpeakerId: string): Promise<void> {
+  await prisma.transcript.updateMany({
+    where: { callId, speakerId: String(repSpeakerId) },
+    data: { speakerRole: "Representative" },
+  });
+  await prisma.transcript.updateMany({
+    where: { callId, speakerId: { not: String(repSpeakerId) } },
+    data: { speakerRole: "Customer" },
+  });
+}
+
+export async function getFullCallDetails(callId: string) {
+  const call = await prisma.call.findUnique({
+    where: { id: callId },
+    include: {
+      transcripts: { orderBy: { sequenceOrder: "asc" } },
+      analyses: { orderBy: { createdAt: "desc" }, take: 1 },
+      evidenceClaims: { orderBy: { startTime: "asc" } },
+      actionItems: { orderBy: { id: "asc" } },
+    },
+  });
+
+  if (!call) return null;
+
+  return {
+    call: {
+      id: call.id,
+      file_name: call.fileName,
+      file_path: call.filePath,
+      duration_seconds: call.durationSeconds,
+      representative_name: call.representativeName || undefined,
+      customer_name: call.customerName || undefined,
+      customer_phone: call.customerPhone || undefined,
+      status: call.status as CallRecord["status"],
+      sarvam_job_id: call.sarvamJobId || undefined,
+      error_message: call.errorMessage || undefined,
+      created_at: call.createdAt.toISOString(),
+      updated_at: call.updatedAt.toISOString(),
+    },
+    transcripts: call.transcripts.map((t) => ({
+      id: t.id,
+      call_id: t.callId,
+      speaker_id: t.speakerId,
+      speaker_role: t.speakerRole,
+      text: t.text,
+      start_time: t.startTime,
+      end_time: t.endTime,
+      sequence_order: t.sequenceOrder,
+    })),
+    analysis: call.analyses[0]
+      ? {
+          id: call.analyses[0].id,
+          call_id: call.analyses[0].callId,
+          llm_provider: call.analyses[0].llmProvider,
+          llm_model: call.analyses[0].llmModel,
+          executive_summary: call.analyses[0].executiveSummary || "",
+          call_outcome: call.analyses[0].callOutcome || "",
+          lead_sentiment: call.analyses[0].leadSentiment || "",
+          language_mix: call.analyses[0].languageMix || "",
+          entities_json: call.analyses[0].entitiesJson || "",
+          sales_performance_json: call.analyses[0].salesPerformanceJson || "",
+          created_at: call.analyses[0].createdAt.toISOString(),
+        }
+      : null,
+    evidence: call.evidenceClaims.map((e) => ({
+      id: e.id,
+      call_id: e.callId,
+      claim: e.claim,
+      category: e.category,
+      speaker_role: e.speakerRole || "Unknown",
+      speaker_id: e.speakerId || "",
+      verbatim_quote: e.verbatimQuote,
+      start_time: e.startTime,
+      end_time: e.endTime,
+      confidence: e.confidence,
+      grounding_notes: e.groundingNotes || "",
+      status: e.status || "verified",
+    })),
+    actionItems: call.actionItems.map((a) => ({
+      id: a.id,
+      call_id: a.callId,
+      task: a.task,
+      assignee: a.assignee || "Representative",
+      timestamp_ref: a.timestampRef || 0,
+      urgency: a.urgency || "Normal",
+      completed: a.completed,
+    })),
   };
 }

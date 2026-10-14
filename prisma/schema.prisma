@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Call {
+  id                 String           @id
+  fileName           String           @map("file_name")
+  filePath           String           @map("file_path")
+  durationSeconds    Float            @default(0) @map("duration_seconds")
+  representativeName String?          @map("representative_name")
+  customerName       String?          @map("customer_name")
+  customerPhone      String?          @map("customer_phone")
+  status             String           @default("uploaded")
+  sarvamJobId        String?          @map("sarvam_job_id")
+  errorMessage       String?          @map("error_message")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at")
+
+  transcripts        Transcript[]
+  analyses           CallAnalysis[]
+  evidenceClaims     EvidenceClaim[]
+  actionItems        ActionItem[]
+
+  @@map("calls")
+}
+
+model Transcript {
+  id            String   @id @default(cuid())
+  callId        String   @map("call_id")
+  speakerId     String   @map("speaker_id")
+  speakerRole   String   @default("unknown") @map("speaker_role")
+  text          String
+  startTime     Float    @map("start_time")
+  endTime       Float    @map("end_time")
+  sequenceOrder Int      @map("sequence_order")
+
+  call          Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@index([callId, startTime])
+  @@map("transcripts")
+}
+
+model CallAnalysis {
+  id                   String   @id @default(cuid())
+  callId               String   @map("call_id")
+  llmProvider          String   @map("llm_provider")
+  llmModel             String   @map("llm_model")
+  executiveSummary     String?  @map("executive_summary")
+  callOutcome          String?  @map("call_outcome")
+  leadSentiment        String?  @map("lead_sentiment")
+  languageMix          String?  @map("language_mix")
+  entitiesJson         String?  @map("entities_json")
+  salesPerformanceJson String?  @map("sales_performance_json")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  call                 Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@map("call_analyses")
+}
+
+model EvidenceClaim {
+  id             String   @id @default(cuid())
+  callId         String   @map("call_id")
+  claim          String
+  category       String
+  speakerRole    String?  @map("speaker_role")
+  speakerId      String?  @map("speaker_id")
+  verbatimQuote  String   @map("verbatim_quote")
+  startTime      Float    @map("start_time")
+  endTime        Float    @map("end_time")
+  confidence     Float    @default(1.0)
+  groundingNotes String?  @map("grounding_notes")
+  status         String?  @default("verified")
+
+  call           Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@map("evidence_claims")
+}
+
+model ActionItem {
+  id           String   @id @default(cuid())
+  callId       String   @map("call_id")
+  task         String
+  assignee     String?
+  timestampRef Float?   @map("timestamp_ref")
+  urgency      String?
+  completed    Int      @default(0)
+
+  call         Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@map("action_items")
+}

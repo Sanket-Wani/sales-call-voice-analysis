@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { getDb, createCallRecord, saveTranscripts, saveAnalysis, saveEvidenceClaims, saveActionItems, updateCallStatus } from "@/lib/db";
+import { createCallRecord, saveTranscripts, saveAnalysis, saveEvidenceClaims, saveActionItems, updateCallStatus, updateTranscriptSpeakerRoles } from "@/lib/db";
 import { transcribeAudioWithSarvam } from "@/lib/sarvam";
 import { analyzeCallWithLlmPipeline } from "@/lib/llm";
 
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     const relativePath = path.relative(process.cwd(), targetFilePath).replace(/\\/g, "/");
 
     // Create Call Record
-    createCallRecord({
+    await createCallRecord({
       id: callId,
       file_name: originalName,
       file_path: relativePath,
@@ -46,10 +46,10 @@ export async function POST(request: NextRequest) {
       withDiarization: true,
     });
 
-    updateCallStatus(callId, "transcribed");
+    await updateCallStatus(callId, "transcribed");
 
     // Save transcripts
-    saveTranscripts(
+    await saveTranscripts(
       callId,
       transcription.diarizedEntries.map((e) => ({
         speaker_id: e.speaker_id,
@@ -60,12 +60,12 @@ export async function POST(request: NextRequest) {
     );
 
     // 2. Analyze with Sarvam 105B LLM (Fallback: Gemini)
-    updateCallStatus(callId, "analyzing");
+    await updateCallStatus(callId, "analyzing");
     console.log(`[Upload] Analyzing with LLM pipeline...`);
     const analysisResult = await analyzeCallWithLlmPipeline(transcription.diarizedEntries);
 
     // Save Analysis
-    saveAnalysis(callId, {
+    await saveAnalysis(callId, {
       llm_provider: analysisResult.provider,
       llm_model: analysisResult.model,
       executive_summary: analysisResult.report.summary?.executive_summary || "",
@@ -86,13 +86,11 @@ export async function POST(request: NextRequest) {
     )?.speaker_id;
 
     if (repSpeakerId !== undefined && repSpeakerId !== null) {
-      const db = getDb();
-      db.prepare(`UPDATE transcripts SET speaker_role = 'Representative' WHERE call_id = ? AND speaker_id = ?`).run(callId, String(repSpeakerId));
-      db.prepare(`UPDATE transcripts SET speaker_role = 'Customer' WHERE call_id = ? AND speaker_id != ?`).run(callId, String(repSpeakerId));
+      await updateTranscriptSpeakerRoles(callId, String(repSpeakerId));
     }
 
     // Save Grounded Evidence Claims
-    saveEvidenceClaims(
+    await saveEvidenceClaims(
       callId,
       (analysisResult.report.claims_and_evidence || []).map((c) => ({
         claim: c.claim,
@@ -108,7 +106,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Save Action Items
-    saveActionItems(
+    await saveActionItems(
       callId,
       (analysisResult.report.action_items || []).map((a) => ({
         task: a.task,
@@ -118,7 +116,7 @@ export async function POST(request: NextRequest) {
       }))
     );
 
-    updateCallStatus(callId, "completed");
+    await updateCallStatus(callId, "completed");
 
     return NextResponse.json({
       success: true,

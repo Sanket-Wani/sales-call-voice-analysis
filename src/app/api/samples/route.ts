@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { getDb, createCallRecord, saveTranscripts, saveAnalysis, saveEvidenceClaims, saveActionItems, updateCallStatus } from "@/lib/db";
+import { prisma, createCallRecord, saveTranscripts, saveAnalysis, saveEvidenceClaims, saveActionItems, updateCallStatus, updateTranscriptSpeakerRoles } from "@/lib/db";
 import { transcribeAudioWithSarvam } from "@/lib/sarvam";
 import { analyzeCallWithLlmPipeline } from "@/lib/llm";
 
@@ -19,9 +19,8 @@ export async function GET() {
       isAlreadyProcessed: boolean;
     }> = [];
 
-    const db = getDb();
-    const existingCalls = db.prepare("SELECT file_path FROM calls").all() as Array<{ file_path: string }>;
-    const processedPaths = new Set(existingCalls.map(c => c.file_path.replace(/\\/g, "/")));
+    const existingCalls = await prisma.call.findMany({ select: { filePath: true } });
+    const processedPaths = new Set(existingCalls.map(c => c.filePath.replace(/\\/g, "/")));
 
     function scanDir(dir: string, rep: string) {
       if (!fs.existsSync(dir)) return;
@@ -79,7 +78,7 @@ export async function POST(request: NextRequest) {
     const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
     // Create initial record
-    createCallRecord({
+    await createCallRecord({
       id: callId,
       file_name: fileName,
       file_path: samplePath.replace(/\\/g, "/"),
@@ -95,10 +94,10 @@ export async function POST(request: NextRequest) {
       withDiarization: true,
     });
 
-    updateCallStatus(callId, "transcribed");
+    await updateCallStatus(callId, "transcribed");
 
     // Save transcripts
-    saveTranscripts(
+    await saveTranscripts(
       callId,
       transcription.diarizedEntries.map(e => ({
         speaker_id: e.speaker_id,
@@ -109,12 +108,12 @@ export async function POST(request: NextRequest) {
     );
 
     // Step 2: Run LLM Analysis (Sarvam 105b primary, Gemini fallback)
-    updateCallStatus(callId, "analyzing");
+    await updateCallStatus(callId, "analyzing");
     console.log(`[Processing Sample] Running LLM Pipeline for call: ${callId}`);
     const analysisResult = await analyzeCallWithLlmPipeline(transcription.diarizedEntries);
 
     // Save Analysis
-    saveAnalysis(callId, {
+    await saveAnalysis(callId, {
       llm_provider: analysisResult.provider,
       llm_model: analysisResult.model,
       executive_summary: analysisResult.report.summary?.executive_summary || "",
@@ -135,13 +134,11 @@ export async function POST(request: NextRequest) {
     )?.speaker_id;
 
     if (repSpeakerId !== undefined && repSpeakerId !== null) {
-      const db = getDb();
-      db.prepare(`UPDATE transcripts SET speaker_role = 'Representative' WHERE call_id = ? AND speaker_id = ?`).run(callId, String(repSpeakerId));
-      db.prepare(`UPDATE transcripts SET speaker_role = 'Customer' WHERE call_id = ? AND speaker_id != ?`).run(callId, String(repSpeakerId));
+      await updateTranscriptSpeakerRoles(callId, String(repSpeakerId));
     }
 
     // Save Grounded Evidence Claims
-    saveEvidenceClaims(
+    await saveEvidenceClaims(
       callId,
       (analysisResult.report.claims_and_evidence || []).map(c => ({
         claim: c.claim,
@@ -157,7 +154,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Save Action Items
-    saveActionItems(
+    await saveActionItems(
       callId,
       (analysisResult.report.action_items || []).map(a => ({
         task: a.task,
@@ -168,7 +165,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Update final call status
-    updateCallStatus(callId, "completed");
+    await updateCallStatus(callId, "completed");
 
     return NextResponse.json({
       success: true,

@@ -1,26 +1,53 @@
 import { NextResponse } from "next/server";
-import { getAllCalls, getDb } from "@/lib/db";
+import { prisma } from "@/lib/db";
 
 export async function GET() {
   try {
-    const db = getDb();
-    const calls = getAllCalls();
+    const calls = await prisma.call.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        _count: {
+          select: {
+            evidenceClaims: true,
+            transcripts: true,
+          },
+        },
+        analyses: {
+          take: 1,
+          orderBy: { createdAt: "desc" },
+          select: {
+            callOutcome: true,
+            leadSentiment: true,
+            llmProvider: true,
+            llmModel: true,
+            executiveSummary: true,
+          },
+        },
+      },
+    });
 
-    // Enrich calls with counts and analysis summary
     const enriched = calls.map((c) => {
-      const claimsCount = (db.prepare("SELECT count(*) as count FROM evidence_claims WHERE call_id = ?").get(c.id) as any)?.count || 0;
-      const transcriptCount = (db.prepare("SELECT count(*) as count FROM transcripts WHERE call_id = ?").get(c.id) as any)?.count || 0;
-      const analysis = db.prepare("SELECT call_outcome, lead_sentiment, llm_provider, llm_model, executive_summary FROM call_analyses WHERE call_id = ? LIMIT 1").get(c.id) as any;
-
+      const analysis = c.analyses[0];
       return {
-        ...c,
-        claims_count: claimsCount,
-        transcript_count: transcriptCount,
-        outcome: analysis?.call_outcome || "Pending",
-        sentiment: analysis?.lead_sentiment || "Neutral",
-        llm_provider: analysis?.llm_provider || "sarvam",
-        llm_model: analysis?.llm_model || "sarvam-105b-conversations",
-        summary_preview: analysis?.executive_summary?.slice(0, 160) || "",
+        id: c.id,
+        file_name: c.fileName,
+        file_path: c.filePath,
+        duration_seconds: c.durationSeconds,
+        representative_name: c.representativeName || undefined,
+        customer_name: c.customerName || undefined,
+        customer_phone: c.customerPhone || undefined,
+        status: c.status,
+        sarvam_job_id: c.sarvamJobId || undefined,
+        error_message: c.errorMessage || undefined,
+        created_at: c.createdAt.toISOString(),
+        updated_at: c.updatedAt.toISOString(),
+        claims_count: c._count.evidenceClaims,
+        transcript_count: c._count.transcripts,
+        outcome: analysis?.callOutcome || "Pending",
+        sentiment: analysis?.leadSentiment || "Neutral",
+        llm_provider: analysis?.llmProvider || "sarvam",
+        llm_model: analysis?.llmModel || "sarvam-105b-conversations",
+        summary_preview: analysis?.executiveSummary?.slice(0, 160) || "",
       };
     });
 
